@@ -998,3 +998,257 @@ class MainWindow(QMainWindow):
             self.history_table.setItem(row, col, item)
 
     def on_success(self, index, title):
+        self.completed += 1
+        self.processed += 1
+        self.current_bar.setValue(100)
+        self.current_pct.setText("100%")
+        self.current_detail.setText("Completed successfully.")
+        self.add_history_row(index, "Completed", title)
+        q = self.queue_rows.get(index, {})
+        self.save_history(q.get("url", ""), title, "Completed", self.output.text(), "Audio" if self.audio_choice.isChecked() else "Video")
+        self._update_batch()
+
+    def on_failed(self, index, url, error):
+        self.failed_count += 1
+        self.processed += 1
+        self.current_pct.setText("Failed")
+        self.current_detail.setText(error[:220])
+        self.add_history_row(index, "Failed", url)
+        self.save_history(url, url, "Failed", self.output.text(), "Audio" if self.audio_choice.isChecked() else "Video")
+        self._update_batch()
+
+    def append_log(self, text):
+        self.log_box.append(text)
+
+    def show_toast(self, message, kind="success", duration=3800):
+        colors = {
+            "success": ("#123A34", C["green"], "#245D50"),
+            "warning": ("#3A3020", C["yellow"], "#705A2B"),
+            "error": ("#3B202B", C["red"], "#713443"),
+            "info": (C["blue_soft"], "#9CCBFF", C["border"]),
+        }
+        background, foreground, border = colors.get(kind, colors["info"])
+        self.toast_label.setText(message)
+        self.toast_label.setStyleSheet(
+            f"QLabel {{ background:{background}; color:{foreground}; "
+            f"border:1px solid {border}; border-radius:10px; "
+            f"padding:12px 18px; font-weight:750; }}"
+        )
+        self.toast_label.adjustSize()
+        parent = self.centralWidget()
+        width = min(max(self.toast_label.sizeHint().width() + 20, 280), 520)
+        height = max(self.toast_label.sizeHint().height() + 8, 48)
+        self.toast_label.setFixedSize(width, height)
+        self.toast_label.move(parent.width() - width - 24, 18)
+        self.toast_label.raise_()
+        self.toast_label.show()
+        QTimer.singleShot(duration, self.toast_label.hide)
+
+    def reset_all(self):
+        if self.worker and self.worker.isRunning():
+            self.show_toast("Stop the active batch before resetting.", "warning")
+            return
+
+        self.urls.clear()
+        self.total = 0
+        self.processed = 0
+        self.completed = 0
+        self.failed_count = 0
+
+        self.current_bar.setValue(0)
+        self.current_pct.setText("0%")
+        self.current_title.setText("Waiting for download")
+        self.current_detail.setText("File size, speed and ETA will appear here.")
+        self.set_thumbnail_placeholder()
+        self.batch_bar.setValue(0)
+        self.batch_count.setText("0 / 0 (0%)")
+
+        self.total_label.setText("Total: 0")
+        self.completed_label.setText("Completed: 0")
+        self.downloading_label.setText("Downloading: 0")
+        self.remaining_label.setText("Remaining: 0")
+
+        self.log_box.clear()
+        if hasattr(self, "history_table"):
+            self.load_history()
+
+        self.ready_badge.setText("●  READY")
+        self.ready_badge.setStyleSheet(
+            f"background:#123A34;color:{C['green']};border-radius:9px;"
+            "padding:9px 13px;font-weight:800;"
+        )
+        self.show_toast("Downloader reset. Ready for a new batch.", "info")
+
+    def on_batch_finished(self, stopped, success, failed):
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.setText("Ⅱ   Pause")
+        self.ready_badge.setText("●  STOPPED" if stopped else "●  COMPLETED")
+        self.ready_badge.setStyleSheet(
+            f"background:#3B202B;color:{C['red']};border-radius:9px;padding:9px 13px;font-weight:800;"
+            if stopped else
+            f"background:#123A34;color:{C['green']};border-radius:9px;padding:9px 13px;font-weight:800;"
+        )
+        self.refresh_stats()
+        self.append_log(f"Batch {'stopped' if stopped else 'finished'} · {success} completed · {failed} failed.")
+        # Keep the last thumbnail visible after completion as a useful last-item reference.
+
+        if stopped:
+            self.show_toast(
+                f"Download batch stopped · {success} completed, {failed} failed.",
+                "warning"
+            )
+        elif failed == 0:
+            self.show_toast(
+                f"All downloads completed successfully! {success} file(s) saved.",
+                "success",
+                5000
+            )
+        else:
+            self.show_toast(
+                f"Batch finished with {success} completed and {failed} failed.",
+                "warning",
+                5000
+            )
+
+    def _queue_page(self):
+        page = QWidget()
+        l = QVBoxLayout(page)
+        l.setContentsMargins(30, 26, 30, 26)
+        title = QLabel("Download Queue")
+        title.setObjectName("PageTitle")
+        sub = QLabel("Each item shows its thumbnail when source metadata is available. Downloads run sequentially.")
+        sub.setObjectName("Subtitle")
+        l.addWidget(title)
+        l.addWidget(sub)
+        p, pl = self.panel("Queue items")
+        self.queue_table = QTableWidget(0, 4)
+        self.queue_table.setHorizontalHeaderLabels(["Thumbnail", "#", "Video / URL", "Status"])
+        self.queue_table.setColumnWidth(0, 120)
+        self.queue_table.setColumnWidth(1, 48)
+        self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.queue_table.setColumnWidth(3, 110)
+        self.queue_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.queue_table.verticalHeader().setDefaultSectionSize(72)
+        pl.addWidget(self.queue_table)
+        l.addWidget(p, 1)
+        return page
+
+    def _history_page(self):
+        page = QWidget()
+        l = QVBoxLayout(page)
+        l.setContentsMargins(30, 26, 30, 26)
+        title = QLabel("Download History")
+        title.setObjectName("PageTitle")
+        sub = QLabel("Download records are stored locally and remain available after restarting the application.")
+        sub.setObjectName("Subtitle")
+        l.addWidget(title)
+        l.addWidget(sub)
+        p, pl = self.panel("Session history")
+        self.history_table = QTableWidget(0, 3)
+        self.history_table.setHorizontalHeaderLabels(["Date / Time", "Status", "Title / URL"])
+        self.history_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        pl.addWidget(self.history_table)
+        l.addWidget(p, 1)
+        return page
+
+    def _settings_page(self):
+        page = QWidget()
+        l = QVBoxLayout(page)
+        l.setContentsMargins(30, 26, 30, 26)
+        title = QLabel("Settings")
+        title.setObjectName("PageTitle")
+        sub = QLabel("Runtime and dependency information.")
+        sub.setObjectName("Subtitle")
+        l.addWidget(title)
+        l.addWidget(sub)
+        p, pl = self.panel("Dependencies")
+        ffmpeg, deno = tool_paths()
+        details = [
+            ("Application", APP_NAME),
+            ("Version", APP_VERSION),
+            ("PySide6", __import__("PySide6").__version__),
+            ("yt-dlp", getattr(yt_dlp, "__version__", "Not installed") if yt_dlp else "Not installed"),
+            ("FFmpeg directory", str(ffmpeg)),
+            ("Deno executable", str(deno)),
+        ]
+        for key, value in details:
+            row = QHBoxLayout()
+            k = QLabel(key)
+            k.setObjectName("Muted")
+            v = QLabel(value)
+            v.setWordWrap(True)
+            v.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            row.addWidget(k, 1)
+            row.addWidget(v, 3)
+            pl.addLayout(row)
+        l.addWidget(p)
+        l.addStretch()
+        return page
+
+    def _about_page(self):
+        page = QWidget()
+        l = QVBoxLayout(page)
+        l.setContentsMargins(30, 26, 30, 26)
+        title = QLabel("About")
+        title.setObjectName("PageTitle")
+        sub = QLabel(APP_NAME)
+        sub.setObjectName("Subtitle")
+        l.addWidget(title)
+        l.addWidget(sub)
+        p, pl = self.panel("About this application")
+        msg = QLabel(
+            "A desktop batch media downloader built with PySide6 and yt-dlp. "
+            "Use it only for content you own or are authorized to download, and follow the "
+            "applicable platform terms and copyright rules."
+        )
+        msg.setWordWrap(True)
+        pl.addWidget(msg)
+        l.addWidget(p)
+        l.addStretch()
+        return page
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "toast_label") and self.toast_label.isVisible():
+            parent = self.centralWidget()
+            self.toast_label.move(
+                parent.width() - self.toast_label.width() - 24,
+                18
+            )
+
+    def closeEvent(self, event):
+        if self.worker and self.worker.isRunning():
+            answer = QMessageBox.question(
+                self, "Download in progress",
+                "A download is running. Stop it and close the application?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if answer == QMessageBox.Yes:
+                self.worker.stop()
+                self.worker.wait(5000)
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
+        if event.isAccepted():
+            self.db.close()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    icon_path = bundle_root() / "assets" / "app_icon.ico"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
+    app.setStyle("Fusion")
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
