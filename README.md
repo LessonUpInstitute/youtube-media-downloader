@@ -49,9 +49,9 @@ The executable is generated at:
 
 `dist\\YouTubeMediaDownloader.exe`
 
-The build script bundles FFmpeg, FFprobe, Deno, yt-dlp and its collected dependencies. Put your custom icon at `assets\\app_icon.ico` to apply it to the EXE.
+The build script bundles FFmpeg, FFprobe, Deno, yt-dlp and its collected dependencies. The repository includes `assets/app_icon.ico`, which is applied to the EXE and application window.
 
-## Pause / resume notes
+## Build the Windows installer (optional)\n\nAfter the EXE is built, install [Inno Setup 6](https://jrsoftware.org/isinfo.php), open `YouTubeMediaDownloader.iss` in Inno Setup Compiler, and click **Compile**. The installer is written to `installer\\YouTubeMediaDownloader-Setup.exe`.\n\n## Pause / resume notes
 
 Downloads are processed sequentially. Pause/resume applies to the currently active download. It takes effect at yt-dlp progress checkpoints, so some extractor or post-processing operations may not pause immediately.
 
@@ -68,7 +68,7 @@ The history database is kept outside the installation directory.
 - `main.py` — application source
 - `build_exe.bat` — Windows EXE build script
 - `requirements.txt` — Python dependencies
-- `assets/app_icon.ico` — application icon
+- `assets/app_icon.ico` — application icon\n- `YouTubeMediaDownloader.iss` — optional Inno Setup installer definition\n- `RELEASE_NOTES_v3.0.0.md` — version 3.0.0 release notes\n- `.gitignore` — excludes local build outputs and history databases
 
 ## Legal notice
 
