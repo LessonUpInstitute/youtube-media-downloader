@@ -115,6 +115,7 @@ class DownloadWorker(QThread):
         self.stop_requested = False
         self.pause_requested = False
         self.pause_condition = threading.Condition()
+        self.current_index = 0
         self.success_count = 0
         self.failed_count = 0
 
